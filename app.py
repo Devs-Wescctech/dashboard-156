@@ -5,14 +5,17 @@ from datetime import datetime, timedelta
 app = Flask(__name__)
 
 # =========================
-# CONFIGURAÇÕES FIXAS (CANAL ÚNICO)
+# CONFIGURAÇÕES FIXAS (CANAL ÚNICO + SETOR)
 # =========================
 
 API_BASE = "https://api.wescctech.com.br/core/v2/api"
 
 CHANNEL_SLUG = "pmpa_156"
 CHANNEL_NAME = "PMPA 156"
-CHANNEL_TOKEN = "65b969dfbf563b1cfdd22917"  # token do canal
+CHANNEL_TOKEN = "65b969dfbf563b1cfdd22917"  # token do canal PMPA 156
+
+# SETOR PRINCIPAL (FILTRO)
+SECTOR_ID = "61bca489e5a3cfe9da65f0a4"
 
 STATUS_AUTOMATICO = 0
 STATUS_AGUARDANDO = 1
@@ -125,8 +128,15 @@ def _parse_count_response(resp):
 
 
 def chama_chats_count(status, headers, usar_filtro_data=False):
+    """
+    POST /chats/count (GLOBAL) com filtro por setor (sectorId)
+    """
     url = f"{API_BASE}/chats/count"
-    payload = {"status": status, "typeChat": TYPECHAT_PADRAO}
+    payload = {
+        "status": status,
+        "typeChat": TYPECHAT_PADRAO,
+        "sectorId": SECTOR_ID,  # <<< FILTRO PRINCIPAL
+    }
 
     if usar_filtro_data:
         payload.update(build_date_filters())
@@ -143,8 +153,16 @@ def chama_chats_count(status, headers, usar_filtro_data=False):
 
 
 def chama_chats_manual_por_usuario(user_id, headers):
+    """
+    POST /chats/count por usuário com filtro por setor (sectorId)
+    """
     url = f"{API_BASE}/chats/count"
-    payload = {"status": STATUS_MANUAL, "typeChat": TYPECHAT_PADRAO, "userId": user_id}
+    payload = {
+        "status": STATUS_MANUAL,
+        "typeChat": TYPECHAT_PADRAO,
+        "userId": user_id,
+        "sectorId": SECTOR_ID,  # <<< FILTRO PRINCIPAL
+    }
 
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=10)
@@ -202,10 +220,8 @@ def build_resumo(headers):
                 u["atendimentosEmAndamento"] = qtd
 
     resposta = {
-        "canal": {
-            "slug": CHANNEL_SLUG,
-            "nome": CHANNEL_NAME,
-        },
+        "canal": {"slug": CHANNEL_SLUG, "nome": CHANNEL_NAME},
+        "setor": {"id": SECTOR_ID, "nome": "PRINCIPAL"},
         "dataReferencia": hoje_str,
         "usuariosOnline": usuarios_online,
         "usuarios": usuarios,
@@ -232,6 +248,7 @@ def home():
     return jsonify({
         "status": "API dashboard-156 rodando",
         "canal": {"slug": CHANNEL_SLUG, "nome": CHANNEL_NAME},
+        "setor": {"id": SECTOR_ID, "nome": "PRINCIPAL"},
         "endpoints": ["/resumo-hoje", "/healthz"]
     })
 
