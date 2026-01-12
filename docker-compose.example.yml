@@ -1,0 +1,7 @@
+services:
+  dashboard-156:
+    container_name: dashboard-156
+    image: ghcr.io/devs-wescctech/dashboard-156:latest
+    restart: unless-stopped
+    ports:
+      - "5022:5000"
