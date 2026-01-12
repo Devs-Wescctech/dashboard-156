@@ -1,6 +1,6 @@
 from flask import Flask, jsonify
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
@@ -18,6 +18,7 @@ SECTOR_ID = "61bca489e5a3cfe9da65f0ad"
 
 STATUS_AGUARDANDO = 1
 STATUS_MANUAL = 2
+STATUS_FINALIZADO = 3
 TYPECHAT_PADRAO = 2
 
 
@@ -71,6 +72,62 @@ def chama_chats_count(status, session, headers):
         return None, f"HTTP {resp.status_code} em /chats/count (status={status}) - {resp.text}"
 
     return _parse_count_response(resp)
+
+
+# ====== ADICIONADO: filtros de data (hoje) + count finalizados ======
+
+def get_today_range_utc():
+    """
+    Início e fim do dia (00:00:00 até 23:59:59.999) em UTC,
+    considerando horário local America/Sao_Paulo (UTC-3).
+    """
+    now_local = datetime.now()
+    start_local = datetime(now_local.year, now_local.month, now_local.day, 0, 0, 0)
+    end_local = datetime(now_local.year, now_local.month, now_local.day, 23, 59, 59, 999000)
+
+    offset = timedelta(hours=3)  # local + 3 = UTC
+    start_utc = start_local + offset
+    end_utc = end_local + offset
+
+    return start_utc.isoformat() + "Z", end_utc.isoformat() + "Z"
+
+
+def build_date_filters():
+    start_iso, end_iso = get_today_range_utc()
+    return {
+        "dateFilters": {
+            "byStartDate": {
+                "start": start_iso,
+                "finish": end_iso
+            }
+        }
+    }
+
+
+def chama_chats_count_finalizados_hoje(session, headers):
+    """
+    POST /chats/count (FINALIZADOS) com filtro por setor e por data (hoje)
+    Aumenta timeout porque pode demorar.
+    """
+    url = f"{API_BASE}/chats/count"
+    payload = {
+        "status": STATUS_FINALIZADO,
+        "typeChat": TYPECHAT_PADRAO,
+        "sectorId": SECTOR_ID,
+    }
+    payload.update(build_date_filters())
+
+    try:
+        resp = session.post(url, headers=headers, json=payload, timeout=90)
+    except Exception as e:
+        return None, f"Erro de conexão com /chats/count (finalizados hoje): {e}"
+
+    if not resp.ok:
+        return None, f"HTTP {resp.status_code} em /chats/count (finalizados hoje) - {resp.text}"
+
+    return _parse_count_response(resp)
+
+# ====== FIM DO ADICIONADO ======
 
 
 def chama_chats_list_manual(session, headers):
@@ -218,7 +275,7 @@ def home():
         "status": "API dashboard-156 rodando",
         "canal": {"slug": CHANNEL_SLUG, "nome": CHANNEL_NAME},
         "setor": {"id": SECTOR_ID, "nome": "PRINCIPAL"},
-        "endpoints": ["/resumo-hoje", "/healthz"]
+        "endpoints": ["/resumo-hoje", "/finalizados", "/healthz"]
     })
 
 
@@ -231,3 +288,29 @@ def healthz():
 def resumo_hoje():
     headers = get_headers()
     return jsonify(build_resumo(headers)), 200
+
+
+# ====== ADICIONADO: rota /finalizados ======
+
+@app.route("/finalizados", methods=["GET"])
+def finalizados():
+    headers = get_headers()
+    session = requests.Session()
+
+    finalizado, err_final = chama_chats_count_finalizados_hoje(session, headers)
+
+    resp = {
+        "canal": {"slug": CHANNEL_SLUG, "nome": CHANNEL_NAME},
+        "setor": {"id": SECTOR_ID, "nome": "PRINCIPAL"},
+        "dataReferencia": datetime.now().date().isoformat(),
+        "clientes": {
+            "finalizado": finalizado
+        }
+    }
+
+    if err_final:
+        resp["avisos"] = [err_final]
+
+    return jsonify(resp), 200
+
+# ====== FIM DO ADICIONADO ======
