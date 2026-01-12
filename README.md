@@ -21,10 +21,8 @@ A API ficará em `http://127.0.0.1:5022/` (ajuste a porta no compose).
 
 COMANDO PARA PUXAR A IMG NO DOCKER
 
-docker rm -f dashboard-156 2>/dev/null || true
-
-docker run -d \
-  --name dashboard-156 \
-  --restart always \
-  -p 5022:5000 \
-  ghcr.io/devs-wescctech/dashboard-156:latest
+docker pull ghcr.io/devs-wescctech/dashboard-156:latest
+docker rm -f dashboard-156
+docker image rm ghcr.io/devs-wescctech/dashboard-156:latest 2>/dev/null || true
+docker pull ghcr.io/devs-wescctech/dashboard-156:latest
+docker run -d --name dashboard-156 --restart always -p 5022:5000 ghcr.io/devs-wescctech/dashboard-156:latest
