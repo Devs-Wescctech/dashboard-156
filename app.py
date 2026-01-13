@@ -16,6 +16,7 @@ CHANNEL_TOKEN = "65b969dfbf563b1cfdd22917"  # token do canal PMPA 156
 
 SECTOR_ID = "61bca489e5a3cfe9da65f0ad"
 
+STATUS_AUTOMATICO = 0
 STATUS_AGUARDANDO = 1
 STATUS_MANUAL = 2
 STATUS_FINALIZADO = 3
@@ -74,7 +75,7 @@ def chama_chats_count(status, session, headers):
     return _parse_count_response(resp)
 
 
-# ====== ADICIONADO: filtros de data (hoje) + count finalizados ======
+# ====== filtros de data (hoje) + count finalizados ======
 
 def get_today_range_utc():
     """
@@ -126,8 +127,6 @@ def chama_chats_count_finalizados_hoje(session, headers):
         return None, f"HTTP {resp.status_code} em /chats/count (finalizados hoje) - {resp.text}"
 
     return _parse_count_response(resp)
-
-# ====== FIM DO ADICIONADO ======
 
 
 def chama_chats_list_manual(session, headers):
@@ -211,9 +210,7 @@ def agrupar_usuarios_por_chats(chats_manual):
             "atendimentosEmAndamento": int(qtd)  # aqui = qtd de MANUAL
         })
 
-    # ordena: maior qtd primeiro, depois nome
     usuarios.sort(key=lambda x: (-x["atendimentosEmAndamento"], x["name"]))
-
     return usuarios, sem_usuario
 
 
@@ -223,7 +220,11 @@ def build_resumo(headers):
 
     session = requests.Session()
 
-    # 1) Contagens por status (mantém apenas AGUARDANDO e MANUAL)
+    # 1) Contagens por status (AGORA: AUTOMATICO + AGUARDANDO + MANUAL)
+    automatico, err_auto = chama_chats_count(STATUS_AUTOMATICO, session, headers)
+    if err_auto:
+        avisos.append(f"automatico: {err_auto}")
+
     aguardando, err_aguard = chama_chats_count(STATUS_AGUARDANDO, session, headers)
     if err_aguard:
         avisos.append(f"aguardando: {err_aguard}")
@@ -232,7 +233,7 @@ def build_resumo(headers):
     if err_manual:
         avisos.append(f"manual: {err_manual}")
 
-    # 2) Lista de chats MANUAL para montar usuários + qtd (substitui /users)
+    # 2) Lista de chats MANUAL para montar usuários + qtd
     chats_manual, avisos_list = chama_chats_list_manual(session, headers)
     if avisos_list:
         avisos.extend(avisos_list)
@@ -247,13 +248,12 @@ def build_resumo(headers):
         "setor": {"id": SECTOR_ID, "nome": "PRINCIPAL"},
         "dataReferencia": hoje_str,
 
-        # contagens por status
         "clientes": {
+            "automatico": automatico,
             "aguardando": aguardando,
             "manual": manual_total,
         },
 
-        # usuários derivados do /chats/list (manual)
         "usuarios": usuarios,
         "manualSemUsuario": manual_sem_usuario,
         "totalUsuariosComManual": len(usuarios),
@@ -290,8 +290,6 @@ def resumo_hoje():
     return jsonify(build_resumo(headers)), 200
 
 
-# ====== ADICIONADO: rota /finalizados ======
-
 @app.route("/finalizados", methods=["GET"])
 def finalizados():
     headers = get_headers()
@@ -312,5 +310,3 @@ def finalizados():
         resp["avisos"] = [err_final]
 
     return jsonify(resp), 200
-
-# ====== FIM DO ADICIONADO ======
