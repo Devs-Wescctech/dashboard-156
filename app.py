@@ -55,14 +55,20 @@ def _parse_count_response(resp):
 
 def chama_chats_count(status, session, headers):
     """
-    POST /chats/count com filtro por setor (sectorId)
+    POST /chats/count
+    - AUTOMATICO (status=0): NÃO usa sectorId
+    - demais status: usa sectorId
     """
     url = f"{API_BASE}/chats/count"
+
     payload = {
         "status": status,
         "typeChat": TYPECHAT_PADRAO,
-        "sectorId": SECTOR_ID,
     }
+
+    # >>> REGRA: automático NÃO filtra por setor
+    if status != STATUS_AUTOMATICO:
+        payload["sectorId"] = SECTOR_ID
 
     try:
         resp = session.post(url, headers=headers, json=payload, timeout=15)
@@ -220,7 +226,7 @@ def build_resumo(headers):
 
     session = requests.Session()
 
-    # 1) Contagens por status (AGORA: AUTOMATICO + AGUARDANDO + MANUAL)
+    # 1) Contagens por status (AUTOMATICO sem setor; outros com setor)
     automatico, err_auto = chama_chats_count(STATUS_AUTOMATICO, session, headers)
     if err_auto:
         avisos.append(f"automatico: {err_auto}")
