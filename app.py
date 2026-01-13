@@ -55,19 +55,14 @@ def _parse_count_response(resp):
 
 def chama_chats_count(status, session, headers):
     """
-    POST /chats/count
-    - AUTOMATICO (status=0): NÃO usa sectorId
-    - demais status: usa sectorId
+    POST /chats/count com filtro por setor (sectorId)
     """
     url = f"{API_BASE}/chats/count"
     payload = {
         "status": status,
         "typeChat": TYPECHAT_PADRAO,
+        "sectorId": SECTOR_ID,
     }
-
-    # automático NÃO filtra por setor
-    if status != STATUS_AUTOMATICO:
-        payload["sectorId"] = SECTOR_ID
 
     try:
         resp = session.post(url, headers=headers, json=payload, timeout=15)
@@ -83,6 +78,10 @@ def chama_chats_count(status, session, headers):
 # ====== filtros de data (hoje) + count finalizados ======
 
 def get_today_range_utc():
+    """
+    Início e fim do dia (00:00:00 até 23:59:59.999) em UTC,
+    considerando horário local America/Sao_Paulo (UTC-3).
+    """
     now_local = datetime.now()
     start_local = datetime(now_local.year, now_local.month, now_local.day, 0, 0, 0)
     end_local = datetime(now_local.year, now_local.month, now_local.day, 23, 59, 59, 999000)
@@ -107,6 +106,10 @@ def build_date_filters():
 
 
 def chama_chats_count_finalizados_hoje(session, headers):
+    """
+    POST /chats/count (FINALIZADOS) com filtro por setor e por data (hoje)
+    Aumenta timeout porque pode demorar.
+    """
     url = f"{API_BASE}/chats/count"
     payload = {
         "status": STATUS_FINALIZADO,
@@ -127,6 +130,10 @@ def chama_chats_count_finalizados_hoje(session, headers):
 
 
 def chama_chats_list_manual(session, headers):
+    """
+    POST /chats/list para listar TODOS os chats MANUAL do setor
+    (com paginação via hasNext)
+    """
     url = f"{API_BASE}/chats/list"
     page = 1
     todos = []
@@ -135,8 +142,8 @@ def chama_chats_list_manual(session, headers):
     while True:
         payload = {
             "page": page,
-            "status": STATUS_MANUAL,
-            "typeChat": TYPECHAT_PADRAO,
+            "status": STATUS_MANUAL,     # status=2 (MANUAL)
+            "typeChat": TYPECHAT_PADRAO, # typeChat=2
             "sectorId": SECTOR_ID
         }
 
@@ -165,6 +172,7 @@ def chama_chats_list_manual(session, headers):
 
         page += 1
 
+        # proteção anti-loop infinito
         if page > 200:
             avisos.append("Interrompido: muitas páginas em /chats/list (manual) (possível loop).")
             break
@@ -173,6 +181,10 @@ def chama_chats_list_manual(session, headers):
 
 
 def agrupar_usuarios_por_chats(chats_manual):
+    """
+    A partir do retorno do /chats/list (manual), monta lista de usuários
+    e quantidade de atendimentos (contando currentUser.id).
+    """
     contagem = {}
     nomes = {}
     sem_usuario = 0
@@ -195,7 +207,7 @@ def agrupar_usuarios_por_chats(chats_manual):
         usuarios.append({
             "id": uid,
             "name": nomes.get(uid, "Sem nome"),
-            "atendimentosEmAndamento": int(qtd)
+            "atendimentosEmAndamento": int(qtd)  # aqui = qtd de MANUAL
         })
 
     usuarios.sort(key=lambda x: (-x["atendimentosEmAndamento"], x["name"]))
@@ -208,6 +220,7 @@ def build_resumo(headers):
 
     session = requests.Session()
 
+    # 1) Contagens por status (AGORA: AUTOMATICO + AGUARDANDO + MANUAL)
     automatico, err_auto = chama_chats_count(STATUS_AUTOMATICO, session, headers)
     if err_auto:
         avisos.append(f"automatico: {err_auto}")
@@ -220,6 +233,7 @@ def build_resumo(headers):
     if err_manual:
         avisos.append(f"manual: {err_manual}")
 
+    # 2) Lista de chats MANUAL para montar usuários + qtd
     chats_manual, avisos_list = chama_chats_list_manual(session, headers)
     if avisos_list:
         avisos.extend(avisos_list)
@@ -233,11 +247,13 @@ def build_resumo(headers):
         "canal": {"slug": CHANNEL_SLUG, "nome": CHANNEL_NAME},
         "setor": {"id": SECTOR_ID, "nome": "PRINCIPAL"},
         "dataReferencia": hoje_str,
+
         "clientes": {
             "automatico": automatico,
             "aguardando": aguardando,
             "manual": manual_total,
         },
+
         "usuarios": usuarios,
         "manualSemUsuario": manual_sem_usuario,
         "totalUsuariosComManual": len(usuarios),
@@ -247,66 +263,6 @@ def build_resumo(headers):
         resposta["avisos"] = avisos
 
     return resposta
-
-
-# ====== NOVO: lista usuários ONLINE do setor Principal ======
-
-def chama_users(session, headers):
-    """
-    GET /users - retorna lista bruta
-    """
-    url = f"{API_BASE}/users"
-    try:
-        resp = session.get(url, headers=headers, timeout=20)
-    except Exception as e:
-        return None, f"Erro de conexão com /users: {e}"
-
-    if not resp.ok:
-        return None, f"HTTP {resp.status_code} em /users - {resp.text}"
-
-    try:
-        data = resp.json()
-    except Exception as e:
-        return None, f"Erro ao decodificar JSON de /users: {e} - corpo: {resp.text}"
-
-    # alguns endpoints retornam lista direto, outros {data:[...]}
-    if isinstance(data, list):
-        return data, None
-    if isinstance(data, dict) and isinstance(data.get("data"), list):
-        return data["data"], None
-
-    return None, f"Estrutura inesperada em /users: {data}"
-
-
-def filtrar_users_online_setor_principal(users):
-    """
-    Mantém somente:
-    - status ONLINE
-    - sectors contém SECTOR_ID
-    Retorna apenas name e status
-    """
-    result = []
-    for u in users or []:
-        status = (u.get("status") or "").upper()
-        if status != "ONLINE":
-            continue
-
-        sectors = u.get("sectors") or []
-        if not isinstance(sectors, list):
-            continue
-
-        tem_setor = any((s or {}).get("id") == SECTOR_ID for s in sectors)
-        if not tem_setor:
-            continue
-
-        result.append({
-            "name": u.get("name"),
-            "status": u.get("status")
-        })
-
-    # ordena por nome
-    result.sort(key=lambda x: (x.get("name") or "").lower())
-    return result
 
 
 # =========================
@@ -319,7 +275,7 @@ def home():
         "status": "API dashboard-156 rodando",
         "canal": {"slug": CHANNEL_SLUG, "nome": CHANNEL_NAME},
         "setor": {"id": SECTOR_ID, "nome": "PRINCIPAL"},
-        "endpoints": ["/resumo-hoje", "/finalizados", "/usuarios-online", "/healthz"]
+        "endpoints": ["/resumo-hoje", "/finalizados", "/healthz"]
     })
 
 
@@ -345,34 +301,12 @@ def finalizados():
         "canal": {"slug": CHANNEL_SLUG, "nome": CHANNEL_NAME},
         "setor": {"id": SECTOR_ID, "nome": "PRINCIPAL"},
         "dataReferencia": datetime.now().date().isoformat(),
-        "clientes": {"finalizado": finalizado}
+        "clientes": {
+            "finalizado": finalizado
+        }
     }
 
     if err_final:
         resp["avisos"] = [err_final]
 
     return jsonify(resp), 200
-
-
-@app.route("/usuarios-online", methods=["GET"])
-def usuarios_online():
-    headers = get_headers()
-    session = requests.Session()
-
-    users, err = chama_users(session, headers)
-    if err:
-        return jsonify({
-            "dataReferencia": datetime.now().date().isoformat(),
-            "usuariosOnlinePrincipal": [],
-            "total": 0,
-            "avisos": [err]
-        }), 200
-
-    filtrados = filtrar_users_online_setor_principal(users)
-
-    return jsonify({
-        "dataReferencia": datetime.now().date().isoformat(),
-        "setor": {"id": SECTOR_ID, "nome": "PRINCIPAL"},
-        "usuariosOnlinePrincipal": filtrados,
-        "total": len(filtrados)
-    }), 200
